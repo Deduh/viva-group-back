@@ -1,0 +1,283 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  CLIENT
+  MANAGER
+  ADMIN
+}
+
+enum UserStatus {
+  active
+  blocked
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  FILE
+  SYSTEM
+  NOTIFICATION
+}
+
+enum TransportDirection {
+  forward
+  return
+}
+
+enum ContactRequestStatus {
+  new
+  handled
+}
+
+enum ContactRequestSource {
+  contacts_form
+}
+
+enum MailingSubscriberStatus {
+  active
+  unsubscribed
+  pending
+}
+
+enum MailingSubscriberSource {
+  home_mailing
+}
+
+enum MailingCampaignStatus {
+  draft
+  sending
+  sent
+  failed
+}
+
+enum MailingLogStatus {
+  sent
+  failed
+}
+
+model User {
+  id                       String                           @id @default(uuid())
+  email                    String                           @unique
+  passwordHash             String
+  name                     String?
+  role                     Role                             @default(CLIENT)
+  avatar                   String?
+  phone                    String?
+  status                   UserStatus                       @default(active)
+  lastLoginAt              DateTime?
+  invitedAt                DateTime?
+  invitedById              String?
+  refreshTokenHash         String?
+  createdAt                DateTime                         @default(now())
+  updatedAt                DateTime                         @updatedAt
+  bookings                 Booking[]
+  groupBookings            GroupTransportBooking[]
+  messages                 Message[]                        @relation("MessageAuthor")
+  bookingReadStates        BookingReadState[]
+  groupTransportReadStates GroupTransportBookingReadState[]
+  mailingCampaigns         MailingCampaign[]                @relation("MailingCampaignCreator")
+  invitedBy                User?                            @relation("UserInvites", fields: [invitedById], references: [id])
+  invitedUsers             User[]                           @relation("UserInvites")
+}
+
+model Tour {
+  id               String    @id @default(uuid())
+  destination      String
+  shortDescription String
+  fullDescription  String?
+  properties       String[]
+  price            Float
+  image            String
+  tags             String[]
+  rating           Float     @default(0)
+  duration         Int?
+  maxPartySize     Int?
+  minPartySize     Int?
+  available        Boolean   @default(true)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  bookings         Booking[]
+}
+
+model Booking {
+  id            String             @id @default(uuid())
+  userId        String
+  tourId        String
+  status        BookingStatus      @default(PENDING)
+  partySize     Int
+  notes         String?
+  startDate     DateTime?
+  paymentStatus String?
+  totalAmount   Float?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  user          User               @relation(fields: [userId], references: [id])
+  tour          Tour               @relation(fields: [tourId], references: [id])
+  messages      Message[]
+  readStates    BookingReadState[]
+
+  @@index([userId])
+  @@index([tourId])
+}
+
+model GroupTransportBooking {
+  id         String                           @id @default(uuid())
+  userId     String
+  status     BookingStatus                    @default(PENDING)
+  note       String?
+  createdAt  DateTime                         @default(now())
+  updatedAt  DateTime                         @updatedAt
+  user       User                             @relation(fields: [userId], references: [id])
+  segments   GroupTransportSegment[]
+  messages   Message[]                        @relation("GroupTransportBookingMessages")
+  readStates GroupTransportBookingReadState[]
+
+  @@index([userId])
+}
+
+model GroupTransportSegment {
+  id               String                @id @default(uuid())
+  bookingId        String
+  direction        TransportDirection
+  departureDate    DateTime
+  flightNumber     String
+  from             String
+  to               String
+  seniorsEco       Int                   @default(0)
+  adultsEco        Int                   @default(0)
+  youthEco         Int                   @default(0)
+  childrenEco      Int                   @default(0)
+  infantsEco       Int                   @default(0)
+  seniorsBusiness  Int                   @default(0)
+  adultsBusiness   Int                   @default(0)
+  youthBusiness    Int                   @default(0)
+  childrenBusiness Int                   @default(0)
+  infantsBusiness  Int                   @default(0)
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+  booking          GroupTransportBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+}
+
+model Message {
+  id                      String                 @id @default(uuid())
+  bookingId               String?
+  groupTransportBookingId String?
+  authorId                String
+  authorName              String?
+  text                    String
+  type                    MessageType            @default(TEXT)
+  isRead                  Boolean                @default(false)
+  attachments             Json?
+  createdAt               DateTime               @default(now())
+  booking                 Booking?               @relation(fields: [bookingId], references: [id])
+  groupTransportBooking   GroupTransportBooking? @relation("GroupTransportBookingMessages", fields: [groupTransportBookingId], references: [id])
+  author                  User                   @relation("MessageAuthor", fields: [authorId], references: [id])
+
+  @@index([bookingId])
+  @@index([groupTransportBookingId])
+  @@index([authorId])
+}
+
+model ContactRequest {
+  id        String               @id @default(uuid())
+  name      String
+  email     String
+  phone     String?
+  message   String
+  status    ContactRequestStatus @default(new)
+  source    ContactRequestSource @default(contacts_form)
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+
+  @@index([email])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model MailingSubscriber {
+  id           String                  @id @default(uuid())
+  email        String                  @unique
+  status       MailingSubscriberStatus @default(pending)
+  source       MailingSubscriberSource @default(home_mailing)
+  confirmToken String                  @unique
+  unsubToken   String                  @unique
+  confirmedAt  DateTime?
+  createdAt    DateTime                @default(now())
+  updatedAt    DateTime                @updatedAt
+  logs         MailingLog[]
+}
+
+model MailingCampaign {
+  id          String                @id @default(uuid())
+  subject     String
+  content     String
+  status      MailingCampaignStatus @default(draft)
+  createdById String?
+  sentAt      DateTime?
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+  logs        MailingLog[]
+  createdBy   User?                 @relation("MailingCampaignCreator", fields: [createdById], references: [id])
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model MailingLog {
+  id           String            @id @default(uuid())
+  campaignId   String
+  subscriberId String
+  email        String
+  status       MailingLogStatus
+  error        String?
+  createdAt    DateTime          @default(now())
+  campaign     MailingCampaign   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  subscriber   MailingSubscriber @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+  @@index([subscriberId])
+}
+
+model BookingReadState {
+  id         String   @id @default(uuid())
+  bookingId  String
+  userId     String
+  lastReadAt DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  booking    Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([bookingId, userId])
+  @@index([userId])
+}
+
+model GroupTransportBookingReadState {
+  id                      String                @id @default(uuid())
+  groupTransportBookingId String
+  userId                  String
+  lastReadAt              DateTime
+  createdAt               DateTime              @default(now())
+  updatedAt               DateTime              @updatedAt
+  booking                 GroupTransportBooking @relation(fields: [groupTransportBookingId], references: [id], onDelete: Cascade)
+  user                    User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupTransportBookingId, userId])
+  @@index([userId])
+}

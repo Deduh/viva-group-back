@@ -1,0 +1,17 @@
+export const TOUR_SELECT = {
+  id: true,
+  destination: true,
+  shortDescription: true,
+  fullDescription: true,
+  properties: true,
+  price: true,
+  image: true,
+  tags: true,
+  rating: true,
+  duration: true,
+  maxPartySize: true,
+  minPartySize: true,
+  available: true,
+  createdAt: true,
+  updatedAt: true,
+};

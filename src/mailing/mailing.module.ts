@@ -1,0 +1,16 @@
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { MailModule } from '../mail/mail.module';
+import { QueuesModule } from '../queues/queues.module';
+import { MailingAdminController } from './mailing-admin.controller';
+import { MailingController } from './mailing.controller';
+import { MailingService } from './mailing.service';
+import { MailingWorker } from './mailing.worker';
+
+@Module({
+  imports: [ConfigModule, MailModule, QueuesModule],
+  controllers: [MailingController, MailingAdminController],
+  providers: [MailingService, MailingWorker],
+  exports: [MailingService],
+})
+export class MailingModule {}
