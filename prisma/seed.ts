@@ -1,14 +1,9 @@
 import { PrismaPg } from '@prisma/adapter-pg';
-import {
-  BookingStatus,
-  MessageType,
-  PrismaClient,
-  Role,
-  TransportDirection,
-  UserStatus,
-} from '@prisma/client';
-import * as bcrypt from 'bcryptjs';
+import { PrismaClient } from '@prisma/client';
 import 'dotenv/config';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as vm from 'vm';
 import { Pool } from 'pg';
 
 const connectionString = process.env.DATABASE_URL;
@@ -19,197 +14,160 @@ if (!connectionString) {
 const pool = new Pool({ connectionString });
 const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
 
-async function clearDatabase() {
-  await prisma.mailingLog.deleteMany();
-  await prisma.mailingCampaign.deleteMany();
-  await prisma.mailingSubscriber.deleteMany();
-  await prisma.contactRequest.deleteMany();
-  await prisma.groupTransportBookingReadState.deleteMany();
-  await prisma.bookingReadState.deleteMany();
-  await prisma.message.deleteMany();
-  await prisma.groupTransportSegment.deleteMany();
-  await prisma.groupTransportBooking.deleteMany();
-  await prisma.booking.deleteMany();
-  await prisma.tour.deleteMany();
-  await prisma.user.deleteMany();
+type CharterProgram = {
+  id: string;
+  title: string;
+  route: string;
+  dateHint: string;
+  duration: string;
+  summary: string;
+  priceFrom: number;
+  highlights: string[];
+  sections: { title: string; items: string[] }[];
+  image: string;
+};
+
+async function clearTours() {
+  const existingTours = await prisma.tour.findMany({
+    select: { id: true },
+  });
+  if (existingTours.length === 0) {
+    return;
+  }
+
+  const tourIds = existingTours.map((tour) => tour.id);
+  const bookings = await prisma.booking.findMany({
+    where: { tourId: { in: tourIds } },
+    select: { id: true },
+  });
+  const bookingIds = bookings.map((booking) => booking.id);
+
+  if (bookingIds.length > 0) {
+    await prisma.message.deleteMany({
+      where: { bookingId: { in: bookingIds } },
+    });
+    await prisma.bookingReadState.deleteMany({
+      where: { bookingId: { in: bookingIds } },
+    });
+    await prisma.booking.deleteMany({
+      where: { id: { in: bookingIds } },
+    });
+  }
+
+  await prisma.tour.deleteMany({
+    where: { id: { in: tourIds } },
+  });
+}
+
+function loadCharterPrograms(): CharterProgram[] {
+  const filePath = path.resolve(process.cwd(), 'TOURS.md');
+  if (!fs.existsSync(filePath)) {
+    throw new Error('TOURS.md not found');
+  }
+
+  const raw = fs.readFileSync(filePath, 'utf8');
+  const stripped = raw
+    .replace(/export\s+const\s+baseCharterPrograms:[^=]+=/, '')
+    .trim();
+  const source = stripped.endsWith(';') ? stripped.slice(0, -1) : stripped;
+
+  const context: { data?: unknown } = {};
+  const script = new vm.Script(`data = ${source}`);
+  script.runInNewContext(context, { timeout: 1000 });
+
+  if (!Array.isArray(context.data)) {
+    throw new Error('Invalid TOURS.md format');
+  }
+
+  return context.data as CharterProgram[];
+}
+
+function parseDurationDays(duration: string): number | undefined {
+  const match = duration.match(/\d+/);
+  if (!match) {
+    return undefined;
+  }
+  return Number(match[0]);
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    result.push(trimmed);
+  }
+  return result;
+}
+
+function buildFullDescription(program: CharterProgram): string {
+  const sections = program.sections
+    .map((section) => {
+      const items = section.items.map((item) => `- ${item}`).join('\n');
+      return `${section.title}\n${items}`;
+    })
+    .join('\n\n');
+
+  return [program.summary, sections].filter(Boolean).join('\n\n');
+}
+
+function buildTags(program: CharterProgram): string[] {
+  const routeTags = program.route
+    .split('·')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  const titleTags: string[] = [];
+  if (program.title.toLowerCase().includes('новый год')) {
+    titleTags.push('Новый год');
+  }
+  if (program.title.toLowerCase().includes('санаторий')) {
+    titleTags.push('Санаторий');
+  }
+
+  return uniqueStrings([...routeTags, ...titleTags]);
+}
+
+function buildRating(program: CharterProgram): number {
+  let rating = 4.4 + Math.min(program.highlights.length, 3) * 0.2;
+  if (program.priceFrom >= 120000) {
+    rating += 0.1;
+  }
+  return Number(Math.min(5, rating).toFixed(1));
 }
 
 async function main() {
-  const shouldClear =
-    process.env.SEED_CLEAR === 'true' || process.argv.includes('--clear');
-  if (shouldClear) {
-    await clearDatabase();
-  }
+  await clearTours();
 
-  const adminPassword = 'Admin123!';
-  const managerPassword = 'Manager123!';
-  const clientPassword = 'Client123!';
+  const programs = loadCharterPrograms();
+  await Promise.all(
+    programs.map((program) =>
+      prisma.tour.create({
+        data: {
+          destination: program.title,
+          shortDescription: program.summary,
+          fullDescription: buildFullDescription(program),
+          properties: uniqueStrings([
+            program.dateHint,
+            program.duration,
+            ...program.highlights,
+          ]),
+          price: program.priceFrom,
+          image: program.image,
+          tags: buildTags(program),
+          rating: buildRating(program),
+          duration: parseDurationDays(program.duration),
+          available: true,
+        },
+      }),
+    ),
+  );
 
-  await prisma.user.upsert({
-    where: { email: 'admin@viva.local' },
-    update: {},
-    create: {
-      email: 'admin@viva.local',
-      passwordHash: await bcrypt.hash(adminPassword, 10),
-      role: Role.ADMIN,
-      status: UserStatus.active,
-      name: 'Admin User',
-    },
-  });
-
-  const manager = await prisma.user.upsert({
-    where: { email: 'manager@viva.local' },
-    update: {},
-    create: {
-      email: 'manager@viva.local',
-      passwordHash: await bcrypt.hash(managerPassword, 10),
-      role: Role.MANAGER,
-      status: UserStatus.active,
-      name: 'Manager User',
-    },
-  });
-
-  const client = await prisma.user.upsert({
-    where: { email: 'client@viva.local' },
-    update: {},
-    create: {
-      email: 'client@viva.local',
-      passwordHash: await bcrypt.hash(clientPassword, 10),
-      role: Role.CLIENT,
-      status: UserStatus.active,
-      name: 'Client User',
-    },
-  });
-
-  const tours = await Promise.all([
-    prisma.tour.create({
-      data: {
-        destination: 'Istanbul',
-        shortDescription: 'City highlights and Bosphorus cruise',
-        fullDescription:
-          'Explore the historic peninsula, bazaars, and iconic landmarks.',
-        properties: ['Guide included', 'Hotel pickup'],
-        price: 450,
-        image: 'https://example.com/images/istanbul.jpg',
-        tags: ['city', 'culture'],
-        rating: 4.6,
-        duration: 3,
-        maxPartySize: 20,
-        minPartySize: 2,
-        available: true,
-      },
-    }),
-    prisma.tour.create({
-      data: {
-        destination: 'Cappadocia',
-        shortDescription: 'Hot air balloon adventure',
-        fullDescription:
-          'Sunrise balloon ride over fairy chimneys with breakfast.',
-        properties: ['Balloon ride', 'Breakfast'],
-        price: 900,
-        image: 'https://example.com/images/cappadocia.jpg',
-        tags: ['adventure', 'nature'],
-        rating: 4.9,
-        duration: 2,
-        maxPartySize: 12,
-        minPartySize: 1,
-        available: true,
-      },
-    }),
-    prisma.tour.create({
-      data: {
-        destination: 'Antalya',
-        shortDescription: 'Beach escape',
-        fullDescription: 'Relax by the Mediterranean with optional excursions.',
-        properties: ['Resort stay', 'Transfers'],
-        price: 600,
-        image: 'https://example.com/images/antalya.jpg',
-        tags: ['beach', 'relax'],
-        rating: 4.4,
-        duration: 5,
-        maxPartySize: 10,
-        minPartySize: 1,
-        available: true,
-      },
-    }),
-  ]);
-
-  const booking = await prisma.booking.create({
-    data: {
-      userId: client.id,
-      tourId: tours[0].id,
-      status: BookingStatus.CONFIRMED,
-      partySize: 2,
-      notes: 'Window seats, please',
-      startDate: new Date(),
-      paymentStatus: 'PAID',
-      totalAmount: 900,
-    },
-  });
-
-  await prisma.message.createMany({
-    data: [
-      {
-        bookingId: booking.id,
-        authorId: client.id,
-        authorName: client.name ?? 'Client',
-        text: 'Looking forward to this trip!',
-        type: MessageType.TEXT,
-        isRead: true,
-      },
-      {
-        bookingId: booking.id,
-        authorId: manager.id,
-        authorName: manager.name ?? 'Manager',
-        text: 'We will confirm all details soon.',
-        type: MessageType.TEXT,
-        isRead: false,
-      },
-    ],
-  });
-
-  const groupBooking = await prisma.groupTransportBooking.create({
-    data: {
-      userId: client.id,
-      status: BookingStatus.PENDING,
-      note: 'Group transport request',
-      segments: {
-        create: [
-          {
-            direction: TransportDirection.forward,
-            departureDate: new Date(),
-            flightNumber: 'TK123',
-            from: 'IST',
-            to: 'AYT',
-            seniorsEco: 0,
-            adultsEco: 2,
-            youthEco: 0,
-            childrenEco: 0,
-            infantsEco: 0,
-            seniorsBusiness: 0,
-            adultsBusiness: 0,
-            youthBusiness: 0,
-            childrenBusiness: 0,
-            infantsBusiness: 0,
-          },
-        ],
-      },
-    },
-  });
-
-  await prisma.message.create({
-    data: {
-      groupTransportBookingId: groupBooking.id,
-      authorId: manager.id,
-      authorName: manager.name ?? 'Manager',
-      text: 'We are checking availability for your group transport.',
-      type: MessageType.NOTIFICATION,
-      isRead: false,
-    },
-  });
-
-  console.log('Seeded data');
-  console.log({ adminPassword, managerPassword, clientPassword });
+  console.log('Seeded tours');
 }
 
 main()
