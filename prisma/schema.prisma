@@ -96,6 +96,7 @@ model User {
 
 model Tour {
   id               String    @id @default(uuid())
+  publicId         String    @unique
   destination      String
   shortDescription String
   fullDescription  String?
@@ -113,14 +114,19 @@ model Tour {
   bookings         Booking[]
 }
 
+model TourIdCounter {
+  year    Int @id
+  current Int
+}
+
 model Booking {
   id            String             @id @default(uuid())
+  publicId      String             @unique
   userId        String
   tourId        String
   status        BookingStatus      @default(PENDING)
-  partySize     Int
+  participants  Json               @default("[]")
   notes         String?
-  startDate     DateTime?
   paymentStatus String?
   totalAmount   Float?
   createdAt     DateTime           @default(now())
@@ -132,6 +138,11 @@ model Booking {
 
   @@index([userId])
   @@index([tourId])
+}
+
+model BookingIdCounter {
+  year    Int @id
+  current Int
 }
 
 model GroupTransportBooking {

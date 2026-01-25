@@ -1,11 +1,5 @@
 import { BookingStatus } from '@prisma/client';
-import {
-  IsDateString,
-  IsEnum,
-  IsOptional,
-  IsString,
-  IsUUID,
-} from 'class-validator';
+import { IsEnum, IsOptional, IsString, IsUUID, Matches } from 'class-validator';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
 
 export class BookingListQueryDto extends PaginationQueryDto {
@@ -18,16 +12,9 @@ export class BookingListQueryDto extends PaginationQueryDto {
   userId?: string;
 
   @IsOptional()
-  @IsUUID()
+  @IsString()
+  @Matches(/^[a-z0-9-]+$/i)
   tourId?: string;
-
-  @IsOptional()
-  @IsDateString()
-  dateFrom?: string;
-
-  @IsOptional()
-  @IsDateString()
-  dateTo?: string;
 
   @IsOptional()
   @IsString()

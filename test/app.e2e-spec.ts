@@ -1,17 +1,17 @@
-import 'dotenv/config';
 import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient, Role, UserStatus } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
-import * as request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { randomUUID } from 'crypto';
+import 'dotenv/config';
 import { writeFileSync } from 'fs';
-import { join } from 'path';
 import { tmpdir } from 'os';
-import { PrismaPg } from '@prisma/adapter-pg';
+import { join } from 'path';
 import { Pool } from 'pg';
+import * as request from 'supertest';
 import { App } from 'supertest/types';
+import { AppModule } from '../src/app.module';
 
 const BASE64_PNG =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4//8/AwAI/AL+Edz38QAAAABJRU5ErkJggg==';
@@ -37,15 +37,20 @@ describe('API (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
+
     await app.init();
+
     server = app.getHttpServer() as unknown as App;
 
     const connectionString = process.env.DATABASE_URL;
+
     if (!connectionString) {
       throw new Error('DATABASE_URL is required for tests');
     }
+
     pool = new Pool({ connectionString });
     prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
+
     await prisma.user.create({
       data: {
         email: adminEmail,
@@ -54,6 +59,7 @@ describe('API (e2e)', () => {
         status: UserStatus.active,
       },
     });
+
     await prisma.user.create({
       data: {
         email: clientEmail,
@@ -67,6 +73,7 @@ describe('API (e2e)', () => {
       .post('/auth/login')
       .send({ email: adminEmail, password: adminPassword })
       .expect(200);
+
     const adminBody = adminLogin.body as { tokens: { accessToken: string } };
     adminToken = adminBody.tokens.accessToken;
 
@@ -74,6 +81,7 @@ describe('API (e2e)', () => {
       .post('/auth/login')
       .send({ email: clientEmail, password: clientPassword })
       .expect(200);
+
     const clientBody = clientLogin.body as { tokens: { accessToken: string } };
     clientToken = clientBody.tokens.accessToken;
   });
@@ -83,9 +91,11 @@ describe('API (e2e)', () => {
       await prisma.message.deleteMany({ where: { bookingId } });
       await prisma.booking.deleteMany({ where: { id: bookingId } });
     }
+
     if (tourId) {
       await prisma.tour.deleteMany({ where: { id: tourId } });
     }
+
     await prisma.user.deleteMany({
       where: { email: { in: [adminEmail, clientEmail] } },
     });
@@ -128,7 +138,14 @@ describe('API (e2e)', () => {
       .set('Authorization', `Bearer ${clientToken}`)
       .send({
         tourId,
-        partySize: 2,
+        participants: [
+          {
+            fullName: 'Test User',
+            birthDate: '1995-01-01',
+            gender: 'male',
+            passportNumber: '1234567890',
+          },
+        ],
         notes: 'Test booking',
       })
       .expect(201);
@@ -155,6 +172,7 @@ describe('API (e2e)', () => {
 
   it('uploads a tour image', async () => {
     const filePath = join(tmpdir(), `upload-${randomUUID()}.png`);
+
     writeFileSync(filePath, Buffer.from(BASE64_PNG, 'base64'));
 
     const response = await request(server)

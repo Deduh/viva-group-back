@@ -5,6 +5,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Matches,
   Min,
 } from 'class-validator';
 import { PaginationQueryDto } from '../../common/dto/pagination-query.dto';
@@ -14,6 +15,11 @@ export class TourListQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^VIVA-TOUR-\d{4}-\d{5}$/)
+  publicId?: string;
 
   @IsOptional()
   @Transform(({ value }) => parseStringArray(value))

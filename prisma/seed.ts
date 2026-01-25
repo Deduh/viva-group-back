@@ -3,10 +3,11 @@ import { PrismaClient } from '@prisma/client';
 import 'dotenv/config';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as vm from 'vm';
 import { Pool } from 'pg';
+import * as vm from 'vm';
 
 const connectionString = process.env.DATABASE_URL;
+
 if (!connectionString) {
   throw new Error('DATABASE_URL is required');
 }
@@ -31,7 +32,10 @@ async function clearTours() {
   const existingTours = await prisma.tour.findMany({
     select: { id: true },
   });
+
   if (existingTours.length === 0) {
+    await prisma.tourIdCounter.deleteMany();
+
     return;
   }
 
@@ -57,10 +61,13 @@ async function clearTours() {
   await prisma.tour.deleteMany({
     where: { id: { in: tourIds } },
   });
+
+  await prisma.tourIdCounter.deleteMany();
 }
 
 function loadCharterPrograms(): CharterProgram[] {
   const filePath = path.resolve(process.cwd(), 'TOURS.md');
+
   if (!fs.existsSync(filePath)) {
     throw new Error('TOURS.md not found');
   }
@@ -84,23 +91,29 @@ function loadCharterPrograms(): CharterProgram[] {
 
 function parseDurationDays(duration: string): number | undefined {
   const match = duration.match(/\d+/);
+
   if (!match) {
     return undefined;
   }
+
   return Number(match[0]);
 }
 
 function uniqueStrings(values: string[]): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
+
   for (const value of values) {
     const trimmed = value.trim();
+
     if (!trimmed || seen.has(trimmed)) {
       continue;
     }
+
     seen.add(trimmed);
     result.push(trimmed);
   }
+
   return result;
 }
 
@@ -122,9 +135,11 @@ function buildTags(program: CharterProgram): string[] {
     .filter(Boolean);
 
   const titleTags: string[] = [];
+
   if (program.title.toLowerCase().includes('новый год')) {
     titleTags.push('Новый год');
   }
+
   if (program.title.toLowerCase().includes('санаторий')) {
     titleTags.push('Санаторий');
   }
@@ -134,9 +149,11 @@ function buildTags(program: CharterProgram): string[] {
 
 function buildRating(program: CharterProgram): number {
   let rating = 4.4 + Math.min(program.highlights.length, 3) * 0.2;
+
   if (program.priceFrom >= 120000) {
     rating += 0.1;
   }
+
   return Number(Math.min(5, rating).toFixed(1));
 }
 
@@ -144,30 +161,47 @@ async function main() {
   await clearTours();
 
   const programs = loadCharterPrograms();
-  await Promise.all(
-    programs.map((program) =>
-      prisma.tour.create({
-        data: {
-          destination: program.title,
-          shortDescription: program.summary,
-          fullDescription: buildFullDescription(program),
-          properties: uniqueStrings([
-            program.dateHint,
-            program.duration,
-            ...program.highlights,
-          ]),
-          price: program.priceFrom,
-          image: program.image,
-          tags: buildTags(program),
-          rating: buildRating(program),
-          duration: parseDurationDays(program.duration),
-          available: true,
-        },
-      }),
-    ),
-  );
+
+  for (const program of programs) {
+    const id = await generateUniqueTourId();
+    await prisma.tour.create({
+      data: {
+        publicId: id,
+        destination: program.title,
+        shortDescription: program.summary,
+        fullDescription: buildFullDescription(program),
+        properties: uniqueStrings([
+          program.dateHint,
+          program.duration,
+          ...program.highlights,
+        ]),
+        price: program.priceFrom,
+        image: program.image,
+        tags: buildTags(program),
+        rating: buildRating(program),
+        duration: parseDurationDays(program.duration),
+        available: true,
+      },
+    });
+  }
 
   console.log('Seeded tours');
+}
+
+async function generateUniqueTourId() {
+  const year = new Date().getFullYear();
+  const rows = await prisma.$queryRaw<{ current: number }[]>`
+    INSERT INTO "TourIdCounter" ("year", "current")
+    VALUES (${year}, 1)
+    ON CONFLICT ("year")
+    DO UPDATE SET "current" = "TourIdCounter"."current" + 1
+    RETURNING "current";
+  `;
+
+  const current = rows[0]?.current ?? 1;
+  const sequence = String(current).padStart(5, '0');
+
+  return `VIVA-TOUR-${year}-${sequence}`;
 }
 
 main()

@@ -1,28 +1,31 @@
+import { Type } from 'class-transformer';
 import {
-  IsDateString,
-  IsInt,
+  ArrayMinSize,
+  IsArray,
   IsNumber,
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   Min,
+  ValidateNested,
 } from 'class-validator';
+import { ParticipantDto } from './participant.dto';
 
 export class CreateBookingDto {
-  @IsUUID()
+  @IsString()
+  @Matches(/^[a-z0-9-]+$/i)
   tourId: string;
 
-  @IsInt()
-  @Min(1)
-  partySize: number;
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => ParticipantDto)
+  participants: ParticipantDto[];
 
   @IsOptional()
   @IsString()
   notes?: string;
-
-  @IsOptional()
-  @IsDateString()
-  startDate?: string;
 
   @IsOptional()
   @IsString()

@@ -48,19 +48,16 @@ export class BookingsService {
     }
 
     if (query.tourId) {
-      where.tourId = query.tourId;
-    }
+      const tour = await this.prisma.tour.findFirst({
+        where: { OR: [{ id: query.tourId }, { publicId: query.tourId }] },
+        select: { id: true },
+      });
 
-    if (query.dateFrom || query.dateTo) {
-      where.startDate = {};
-
-      if (query.dateFrom) {
-        where.startDate.gte = new Date(query.dateFrom);
+      if (!tour) {
+        return { items: [], total: 0, page, limit };
       }
 
-      if (query.dateTo) {
-        where.startDate.lte = new Date(query.dateTo);
-      }
+      where.tourId = tour.id;
     }
 
     if (query.search) {
@@ -87,12 +84,17 @@ export class BookingsService {
       this.prisma.booking.count({ where }),
     ]);
 
-    return { items, total, page, limit };
+    return {
+      items: items.map((item) => this.withTourPublicId(item)),
+      total,
+      page,
+      limit,
+    };
   }
 
   async findOne(id: string, currentUser: RequestUser) {
-    const booking = await this.prisma.booking.findUnique({
-      where: { id },
+    const booking = await this.prisma.booking.findFirst({
+      where: { OR: [{ id }, { publicId: id }] },
       include: BOOKING_INCLUDE,
     });
 
@@ -102,7 +104,7 @@ export class BookingsService {
 
     this.assertAccess(booking.userId, currentUser);
 
-    return booking;
+    return this.withTourPublicId(booking);
   }
 
   async create(dto: CreateBookingDto, currentUser: RequestUser) {
@@ -118,70 +120,76 @@ export class BookingsService {
       }
     }
 
-    const tour = await this.prisma.tour.findUnique({
-      where: { id: dto.tourId },
-      select: { id: true, available: true },
-    });
+    const tour = await this.resolveTour(dto.tourId);
+    const year = new Date().getFullYear();
 
-    if (!tour) {
-      throw new NotFoundException('Tour not found');
-    }
+    return this.prisma.$transaction(
+      async (tx) => {
+        const publicId = await this.allocatePublicId(tx, year);
 
-    if (!tour.available) {
-      throw new ConflictException('Tour is not available');
-    }
+        const booking = await tx.booking.create({
+          data: {
+            publicId,
+            userId,
+            tourId: tour.id,
+            participants: this.serializeParticipants(dto.participants),
+            notes: sanitizeOptionalText(dto.notes),
+            paymentStatus: dto.paymentStatus,
+            totalAmount: dto.totalAmount,
+          },
+          include: BOOKING_INCLUDE,
+        });
 
-    return this.prisma.booking.create({
-      data: {
-        userId,
-        tourId: dto.tourId,
-        partySize: dto.partySize,
-        notes: sanitizeOptionalText(dto.notes),
-        startDate: dto.startDate ? new Date(dto.startDate) : undefined,
-        paymentStatus: dto.paymentStatus,
-        totalAmount: dto.totalAmount,
+        return this.withTourPublicId(booking);
       },
-      include: BOOKING_INCLUDE,
-    });
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   }
 
   async update(id: string, dto: UpdateBookingDto, currentUser: RequestUser) {
-    const booking = await this.prisma.booking.findUnique({ where: { id } });
+    const existingBooking = await this.prisma.booking.findFirst({
+      where: { OR: [{ id }, { publicId: id }] },
+    });
 
-    if (!booking) {
+    if (!existingBooking) {
       throw new NotFoundException('Booking not found');
     }
 
-    this.assertAccess(booking.userId, currentUser);
+    this.assertAccess(existingBooking.userId, currentUser);
 
-    return this.prisma.booking.update({
-      where: { id },
+    const updatedBooking = await this.prisma.booking.update({
+      where: { id: existingBooking.id },
       data: {
-        partySize: dto.partySize,
+        participants: dto.participants
+          ? this.serializeParticipants(dto.participants)
+          : undefined,
         notes: sanitizeOptionalText(dto.notes),
-        startDate: dto.startDate ? new Date(dto.startDate) : undefined,
         paymentStatus: dto.paymentStatus,
       },
       include: BOOKING_INCLUDE,
     });
+
+    return this.withTourPublicId(updatedBooking);
   }
 
   async updateStatus(id: string, dto: UpdateBookingStatusDto) {
-    await this.ensureExists(id);
+    const resolvedId = await this.ensureExists(id);
 
     const booking = await this.prisma.booking.update({
-      where: { id },
+      where: { id: resolvedId },
       data: { status: dto.status },
       include: BOOKING_INCLUDE,
     });
 
     this.gateway.emitStatus(booking.id, booking.status);
 
-    return booking;
+    return this.withTourPublicId(booking);
   }
 
   async cancel(id: string, currentUser: RequestUser) {
-    const booking = await this.prisma.booking.findUnique({ where: { id } });
+    const booking = await this.prisma.booking.findFirst({
+      where: { OR: [{ id }, { publicId: id }] },
+    });
 
     if (!booking) {
       throw new NotFoundException('Booking not found');
@@ -190,14 +198,14 @@ export class BookingsService {
     this.assertAccess(booking.userId, currentUser);
 
     const updated = await this.prisma.booking.update({
-      where: { id },
+      where: { id: booking.id },
       data: { status: BookingStatus.CANCELLED },
       include: BOOKING_INCLUDE,
     });
 
     this.gateway.emitStatus(updated.id, updated.status);
 
-    return updated;
+    return this.withTourPublicId(updated);
   }
 
   private assertAccess(ownerId: string, currentUser: RequestUser) {
@@ -217,14 +225,71 @@ export class BookingsService {
     return requestedUserId ?? currentUser.sub;
   }
 
-  private async ensureExists(id: string) {
-    const exists = await this.prisma.booking.findUnique({
-      where: { id },
+  private async ensureExists(idOrPublicId: string) {
+    const exists = await this.prisma.booking.findFirst({
+      where: { OR: [{ id: idOrPublicId }, { publicId: idOrPublicId }] },
       select: { id: true },
     });
 
     if (!exists) {
       throw new NotFoundException('Booking not found');
     }
+
+    return exists.id;
+  }
+
+  private serializeParticipants(
+    participants: CreateBookingDto['participants'],
+  ): Prisma.JsonArray {
+    return participants.map((participant) => ({
+      fullName: participant.fullName,
+      birthDate: participant.birthDate,
+      gender: participant.gender,
+      passportNumber: participant.passportNumber,
+    }));
+  }
+
+  private async resolveTour(tourIdOrPublicId: string) {
+    const tour = await this.prisma.tour.findFirst({
+      where: { OR: [{ id: tourIdOrPublicId }, { publicId: tourIdOrPublicId }] },
+      select: { id: true, available: true },
+    });
+
+    if (!tour) {
+      throw new NotFoundException('Tour not found');
+    }
+
+    if (!tour.available) {
+      throw new ConflictException('Tour is not available');
+    }
+
+    return tour;
+  }
+
+  private async allocatePublicId(
+    tx: Prisma.TransactionClient,
+    year: number,
+  ): Promise<string> {
+    const rows = await tx.$queryRaw<{ current: number }[]>`
+      INSERT INTO "BookingIdCounter" ("year", "current")
+      VALUES (${year}, 1)
+      ON CONFLICT ("year")
+      DO UPDATE SET "current" = "BookingIdCounter"."current" + 1
+      RETURNING "current";
+    `;
+
+    const current = rows[0]?.current ?? 1;
+    const sequence = String(current).padStart(5, '0');
+
+    return `VIVA-BOOK-${year}-${sequence}`;
+  }
+
+  private withTourPublicId<T extends { tour?: { publicId?: string | null } }>(
+    booking: T,
+  ) {
+    return {
+      ...booking,
+      tourPublicId: booking.tour?.publicId ?? null,
+    };
   }
 }

@@ -1,5 +1,6 @@
 export const TOUR_SELECT = {
   id: true,
+  publicId: true,
   destination: true,
   shortDescription: true,
   fullDescription: true,

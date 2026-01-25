@@ -55,6 +55,10 @@ export class ToursService {
       where.rating = { gte: query.minRating };
     }
 
+    if (query.publicId) {
+      where.publicId = query.publicId;
+    }
+
     const orderBy: Prisma.TourOrderByWithRelationInput = query.sortBy
       ? { [query.sortBy]: query.sortOrder ?? 'desc' }
       : { createdAt: 'desc' };
@@ -68,7 +72,9 @@ export class ToursService {
   }
 
   async findOne(id: string) {
-    const tour = await this.prisma.tour.findUnique({ where: { id } });
+    const tour = await this.prisma.tour.findFirst({
+      where: { OR: [{ id }, { publicId: id }] },
+    });
 
     if (!tour) {
       throw new NotFoundException('Tour not found');
@@ -78,23 +84,33 @@ export class ToursService {
   }
 
   async create(dto: CreateTourDto) {
-    return this.prisma.tour.create({
-      data: {
-        ...dto,
-        destination: sanitizePlainText(dto.destination),
-        shortDescription: sanitizePlainText(dto.shortDescription),
-        fullDescription: sanitizeOptionalText(dto.fullDescription),
-        properties: sanitizeStringArray(dto.properties),
-        tags: sanitizeStringArray(dto.tags),
+    const year = new Date().getFullYear();
+
+    return this.prisma.$transaction(
+      async (tx) => {
+        const publicId = await this.allocatePublicId(tx, year);
+
+        return tx.tour.create({
+          data: {
+            publicId,
+            ...dto,
+            destination: sanitizePlainText(dto.destination),
+            shortDescription: sanitizePlainText(dto.shortDescription),
+            fullDescription: sanitizeOptionalText(dto.fullDescription),
+            properties: sanitizeStringArray(dto.properties),
+            tags: sanitizeStringArray(dto.tags),
+          },
+        });
       },
-    });
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   }
 
   async update(id: string, dto: UpdateTourDto) {
-    await this.ensureExists(id);
+    const resolvedId = await this.ensureExists(id);
 
     return this.prisma.tour.update({
-      where: { id },
+      where: { id: resolvedId },
       data: {
         destination: dto.destination
           ? sanitizePlainText(dto.destination)
@@ -122,8 +138,9 @@ export class ToursService {
   }
 
   async remove(id: string) {
+    const resolvedId = await this.ensureExists(id);
     const tour = await this.prisma.tour.findUnique({
-      where: { id },
+      where: { id: resolvedId },
       select: { id: true, _count: { select: { bookings: true } } },
     });
 
@@ -135,17 +152,37 @@ export class ToursService {
       throw new ConflictException('Tour has bookings and cannot be deleted');
     }
 
-    return this.prisma.tour.delete({ where: { id } });
+    return this.prisma.tour.delete({ where: { id: resolvedId } });
   }
 
-  private async ensureExists(id: string) {
-    const exists = await this.prisma.tour.findUnique({
-      where: { id },
+  private async ensureExists(idOrPublicId: string) {
+    const exists = await this.prisma.tour.findFirst({
+      where: { OR: [{ id: idOrPublicId }, { publicId: idOrPublicId }] },
       select: { id: true },
     });
 
     if (!exists) {
       throw new NotFoundException('Tour not found');
     }
+
+    return exists.id;
+  }
+
+  private async allocatePublicId(
+    tx: Prisma.TransactionClient,
+    year: number,
+  ): Promise<string> {
+    const rows = await tx.$queryRaw<{ current: number }[]>`
+      INSERT INTO "TourIdCounter" ("year", "current")
+      VALUES (${year}, 1)
+      ON CONFLICT ("year")
+      DO UPDATE SET "current" = "TourIdCounter"."current" + 1
+      RETURNING "current";
+    `;
+
+    const current = rows[0]?.current ?? 1;
+    const sequence = String(current).padStart(5, '0');
+
+    return `VIVA-TOUR-${year}-${sequence}`;
   }
 }
