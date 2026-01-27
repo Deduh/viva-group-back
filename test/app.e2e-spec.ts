@@ -109,17 +109,19 @@ describe('API (e2e)', () => {
       .post('/api/tours')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
-        destination: 'Test Destination',
+        title: 'Test Tour',
         shortDescription: 'Short description',
-        fullDescription: 'Full description',
-        properties: ['Guide'],
+        fullDescriptionBlocks: [
+          { title: 'Day 1', items: ['Arrival', 'Check-in'] },
+        ],
+        dateFrom: '2026-01-01',
+        dateTo: '2026-01-03',
+        durationDays: 3,
+        durationNights: 2,
         price: 120,
         image: 'https://example.com/image.jpg',
+        categories: ['Harbin'],
         tags: ['test'],
-        rating: 4.2,
-        duration: 2,
-        maxPartySize: 8,
-        minPartySize: 1,
         available: true,
       })
       .expect(201);

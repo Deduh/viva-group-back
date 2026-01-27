@@ -1,5 +1,5 @@
 import { PrismaPg } from '@prisma/adapter-pg';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import 'dotenv/config';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -89,14 +89,17 @@ function loadCharterPrograms(): CharterProgram[] {
   return context.data as CharterProgram[];
 }
 
-function parseDurationDays(duration: string): number | undefined {
-  const match = duration.match(/\d+/);
+function parseDurationParts(duration: string): {
+  days?: number;
+  nights?: number;
+} {
+  const daysMatch = duration.match(/(\d+)\s*д/i);
+  const nightsMatch = duration.match(/(\d+)\s*н/i);
 
-  if (!match) {
-    return undefined;
-  }
-
-  return Number(match[0]);
+  return {
+    days: daysMatch ? Number(daysMatch[1]) : undefined,
+    nights: nightsMatch ? Number(nightsMatch[1]) : undefined,
+  };
 }
 
 function uniqueStrings(values: string[]): string[] {
@@ -117,18 +120,75 @@ function uniqueStrings(values: string[]): string[] {
   return result;
 }
 
-function buildFullDescription(program: CharterProgram): string {
-  const sections = program.sections
-    .map((section) => {
-      const items = section.items.map((item) => `- ${item}`).join('\n');
-      return `${section.title}\n${items}`;
-    })
-    .join('\n\n');
+function buildDescriptionBlocks(
+  program: CharterProgram,
+): Prisma.InputJsonValue {
+  const blocks = program.sections
+    .map((section) => ({
+      title: section.title.trim(),
+      items: uniqueStrings(section.items),
+    }))
+    .filter((section) => section.title.length > 0 && section.items.length > 0);
 
-  return [program.summary, sections].filter(Boolean).join('\n\n');
+  return blocks as Prisma.InputJsonValue;
 }
 
-function buildTags(program: CharterProgram): string[] {
+function extractYear(program: CharterProgram): number {
+  const candidates = [
+    program.dateHint,
+    ...program.sections.map((section) => section.title),
+  ];
+
+  for (const text of candidates) {
+    const match = text.match(/\b(20\d{2})\b/);
+
+    if (match) {
+      return Number(match[1]);
+    }
+  }
+
+  return new Date().getFullYear();
+}
+
+function parseDateRange(program: CharterProgram): {
+  dateFrom?: Date;
+  dateTo?: Date;
+} {
+  const matches = [...program.dateHint.matchAll(/(\d{1,2})\.(\d{1,2})/g)];
+
+  if (matches.length >= 2) {
+    const year = extractYear(program);
+    const [startDay, startMonth] = matches[0].slice(1).map(Number);
+    const [endDay, endMonth] = matches[matches.length - 1]
+      .slice(1)
+      .map(Number);
+
+    const startYear = year;
+    const endYear = endMonth < startMonth ? year + 1 : year;
+
+    return {
+      dateFrom: new Date(Date.UTC(startYear, startMonth - 1, startDay)),
+      dateTo: new Date(Date.UTC(endYear, endMonth - 1, endDay)),
+    };
+  }
+
+  const sectionDates = extractSectionDates(program);
+
+  if (sectionDates.length === 0) {
+    return {};
+  }
+
+  const timestamps = sectionDates.map((date) => date.getTime());
+  const minTime = Math.min(...timestamps);
+  const maxTime = Math.max(...timestamps);
+
+  return {
+    dateFrom: new Date(minTime),
+    dateTo: new Date(maxTime),
+  };
+}
+
+function buildCategories(program: CharterProgram): string[] {
   const routeTags = program.route
     .split('·')
     .map((item) => item.trim())
@@ -147,14 +207,40 @@ function buildTags(program: CharterProgram): string[] {
   return uniqueStrings([...routeTags, ...titleTags]);
 }
 
-function buildRating(program: CharterProgram): number {
-  let rating = 4.4 + Math.min(program.highlights.length, 3) * 0.2;
+function buildTags(program: CharterProgram): string[] {
+  return uniqueStrings(program.highlights);
+}
 
-  if (program.priceFrom >= 120000) {
-    rating += 0.1;
+function extractSectionDates(program: CharterProgram): Date[] {
+  const dates: Date[] = [];
+  const defaultYear = extractYear(program);
+  let inferredYear = defaultYear;
+  let lastMonth: number | undefined;
+
+  for (const section of program.sections) {
+    const matches = [
+      ...section.title.matchAll(/(\d{1,2})\.(\d{1,2})(?:\.(20\d{2}))?/g),
+    ];
+
+    for (const match of matches) {
+      const day = Number(match[1]);
+      const month = Number(match[2]);
+      const explicitYear = match[3] ? Number(match[3]) : undefined;
+
+      if (explicitYear) {
+        inferredYear = explicitYear;
+      } else if (lastMonth !== undefined && month < lastMonth) {
+        // Handle year rollover for ranges like Dec -> Jan.
+        inferredYear += 1;
+      }
+
+      lastMonth = month;
+
+      dates.push(new Date(Date.UTC(inferredYear, month - 1, day)));
+    }
   }
 
-  return Number(Math.min(5, rating).toFixed(1));
+  return dates;
 }
 
 async function main() {
@@ -164,22 +250,22 @@ async function main() {
 
   for (const program of programs) {
     const id = await generateUniqueTourId();
+    const { days, nights } = parseDurationParts(program.duration);
+    const { dateFrom, dateTo } = parseDateRange(program);
     await prisma.tour.create({
       data: {
         publicId: id,
-        destination: program.title,
+        title: program.title,
         shortDescription: program.summary,
-        fullDescription: buildFullDescription(program),
-        properties: uniqueStrings([
-          program.dateHint,
-          program.duration,
-          ...program.highlights,
-        ]),
+        fullDescriptionBlocks: buildDescriptionBlocks(program),
         price: program.priceFrom,
         image: program.image,
+        categories: buildCategories(program),
         tags: buildTags(program),
-        rating: buildRating(program),
-        duration: parseDurationDays(program.duration),
+        dateFrom,
+        dateTo,
+        durationDays: days,
+        durationNights: nights,
         available: true,
       },
     });

@@ -1,34 +1,51 @@
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
   IsBoolean,
+  IsDateString,
   IsInt,
   IsNumber,
   IsOptional,
   IsString,
   IsUrl,
   Min,
+  ValidateNested,
 } from 'class-validator';
 import { parseStringArray } from '../../common/utils/transform';
+import { TourDescriptionBlockDto } from './tour-description-block.dto';
 
 export class UpdateTourDto {
   @IsOptional()
   @IsString()
-  destination?: string;
+  title?: string;
 
   @IsOptional()
   @IsString()
   shortDescription?: string;
 
   @IsOptional()
-  @IsString()
-  fullDescription?: string;
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => TourDescriptionBlockDto)
+  fullDescriptionBlocks?: TourDescriptionBlockDto[];
 
   @IsOptional()
-  @IsArray()
-  @Transform(({ value }) => parseStringArray(value))
-  @IsString({ each: true })
-  properties?: string[];
+  @IsDateString()
+  dateFrom?: string;
+
+  @IsOptional()
+  @IsDateString()
+  dateTo?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  durationDays?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  durationNights?: number;
 
   @IsOptional()
   @IsNumber()
@@ -43,27 +60,13 @@ export class UpdateTourDto {
   @IsArray()
   @Transform(({ value }) => parseStringArray(value))
   @IsString({ each: true })
+  categories?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @Transform(({ value }) => parseStringArray(value))
+  @IsString({ each: true })
   tags?: string[];
-
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  rating?: number;
-
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  duration?: number;
-
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  maxPartySize?: number;
-
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  minPartySize?: number;
 
   @IsOptional()
   @IsBoolean()

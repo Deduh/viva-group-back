@@ -6,12 +6,12 @@ import {
 import { Prisma } from '@prisma/client';
 import { resolvePagination } from '../common/utils/pagination';
 import {
-  sanitizeOptionalText,
   sanitizePlainText,
   sanitizeStringArray,
 } from '../common/utils/sanitize';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTourDto } from './dto/create-tour.dto';
+import { TourDescriptionBlockDto } from './dto/tour-description-block.dto';
 import { TourListQueryDto } from './dto/tour-list-query.dto';
 import { UpdateTourDto } from './dto/update-tour.dto';
 
@@ -29,14 +29,13 @@ export class ToursService {
 
     if (query.search) {
       where.OR = [
-        { destination: { contains: query.search, mode: 'insensitive' } },
+        { title: { contains: query.search, mode: 'insensitive' } },
         { shortDescription: { contains: query.search, mode: 'insensitive' } },
-        { fullDescription: { contains: query.search, mode: 'insensitive' } },
       ];
     }
 
-    if (query.tags && query.tags.length > 0) {
-      where.tags = { hasSome: query.tags };
+    if (query.categories && query.categories.length > 0) {
+      where.categories = { hasSome: query.categories };
     }
 
     if (query.minPrice !== undefined || query.maxPrice !== undefined) {
@@ -49,10 +48,6 @@ export class ToursService {
       if (query.maxPrice !== undefined) {
         where.price.lte = query.maxPrice;
       }
-    }
-
-    if (query.minRating !== undefined) {
-      where.rating = { gte: query.minRating };
     }
 
     if (query.publicId) {
@@ -94,11 +89,15 @@ export class ToursService {
           data: {
             publicId,
             ...dto,
-            destination: sanitizePlainText(dto.destination),
+            title: sanitizePlainText(dto.title),
             shortDescription: sanitizePlainText(dto.shortDescription),
-            fullDescription: sanitizeOptionalText(dto.fullDescription),
-            properties: sanitizeStringArray(dto.properties),
+            fullDescriptionBlocks: this.sanitizeDescriptionBlocks(
+              dto.fullDescriptionBlocks,
+            ),
+            categories: sanitizeStringArray(dto.categories),
             tags: sanitizeStringArray(dto.tags),
+            dateFrom: new Date(dto.dateFrom),
+            dateTo: new Date(dto.dateTo),
           },
         });
       },
@@ -112,26 +111,24 @@ export class ToursService {
     return this.prisma.tour.update({
       where: { id: resolvedId },
       data: {
-        destination: dto.destination
-          ? sanitizePlainText(dto.destination)
-          : undefined,
+        title: dto.title ? sanitizePlainText(dto.title) : undefined,
         shortDescription: dto.shortDescription
           ? sanitizePlainText(dto.shortDescription)
           : undefined,
-        fullDescription:
-          dto.fullDescription !== undefined
-            ? sanitizeOptionalText(dto.fullDescription)
+        fullDescriptionBlocks:
+          dto.fullDescriptionBlocks !== undefined
+            ? this.sanitizeDescriptionBlocks(dto.fullDescriptionBlocks)
             : undefined,
-        properties: dto.properties
-          ? sanitizeStringArray(dto.properties)
+        categories: dto.categories
+          ? sanitizeStringArray(dto.categories)
           : undefined,
         tags: dto.tags ? sanitizeStringArray(dto.tags) : undefined,
         price: dto.price,
         image: dto.image,
-        rating: dto.rating,
-        duration: dto.duration,
-        maxPartySize: dto.maxPartySize,
-        minPartySize: dto.minPartySize,
+        dateFrom: dto.dateFrom ? new Date(dto.dateFrom) : undefined,
+        dateTo: dto.dateTo ? new Date(dto.dateTo) : undefined,
+        durationDays: dto.durationDays,
+        durationNights: dto.durationNights,
         available: dto.available,
       },
     });
@@ -184,5 +181,18 @@ export class ToursService {
     const sequence = String(current).padStart(5, '0');
 
     return `VIVA-TOUR-${year}-${sequence}`;
+  }
+
+  private sanitizeDescriptionBlocks(
+    blocks: TourDescriptionBlockDto[],
+  ): Prisma.InputJsonValue {
+    const sanitized = blocks
+      .map((block) => ({
+        title: sanitizePlainText(block.title),
+        items: sanitizeStringArray(block.items),
+      }))
+      .filter((block) => block.title.length > 0 && block.items.length > 0);
+
+    return sanitized as Prisma.InputJsonValue;
   }
 }

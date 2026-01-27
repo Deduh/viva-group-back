@@ -67,7 +67,7 @@ export class BookingsService {
         { user: { name: { contains: query.search, mode: 'insensitive' } } },
         {
           tour: {
-            destination: { contains: query.search, mode: 'insensitive' },
+            title: { contains: query.search, mode: 'insensitive' },
           },
         },
       ];
@@ -109,6 +109,7 @@ export class BookingsService {
 
   async create(dto: CreateBookingDto, currentUser: RequestUser) {
     const userId = this.resolveUserId(dto.userId, currentUser);
+
     if (dto.userId && currentUser.role !== Role.CLIENT) {
       const userExists = await this.prisma.user.findUnique({
         where: { id: dto.userId },

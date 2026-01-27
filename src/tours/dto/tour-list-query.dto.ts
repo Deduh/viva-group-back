@@ -25,7 +25,7 @@ export class TourListQueryDto extends PaginationQueryDto {
   @Transform(({ value }) => parseStringArray(value))
   @IsArray()
   @IsString({ each: true })
-  tags?: string[];
+  categories?: string[];
 
   @IsOptional()
   @Type(() => Number)
@@ -40,14 +40,8 @@ export class TourListQueryDto extends PaginationQueryDto {
   maxPrice?: number;
 
   @IsOptional()
-  @Type(() => Number)
-  @IsNumber()
-  @Min(0)
-  minRating?: number;
-
-  @IsOptional()
-  @IsIn(['price', 'rating', 'createdAt'])
-  sortBy?: 'price' | 'rating' | 'createdAt';
+  @IsIn(['price', 'createdAt'])
+  sortBy?: 'price' | 'createdAt';
 
   @IsOptional()
   @IsIn(['asc', 'desc'])

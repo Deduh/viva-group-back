@@ -95,23 +95,23 @@ model User {
 }
 
 model Tour {
-  id               String    @id @default(uuid())
-  publicId         String    @unique
-  destination      String
-  shortDescription String
-  fullDescription  String?
-  properties       String[]
-  price            Float
-  image            String
-  tags             String[]
-  rating           Float     @default(0)
-  duration         Int?
-  maxPartySize     Int?
-  minPartySize     Int?
-  available        Boolean   @default(true)
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
-  bookings         Booking[]
+  id                    String    @id @default(uuid())
+  publicId              String    @unique
+  title                 String
+  shortDescription      String
+  fullDescriptionBlocks Json      @default("[]")
+  price                 Float
+  image                 String
+  categories            String[]
+  tags                  String[]
+  dateFrom              DateTime?
+  dateTo                DateTime?
+  durationDays          Int?
+  durationNights        Int?
+  available             Boolean   @default(true)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  bookings              Booking[]
 }
 
 model TourIdCounter {
