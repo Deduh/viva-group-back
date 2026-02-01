@@ -28,11 +28,26 @@ async function bootstrap() {
   app.useGlobalFilters(new HttpExceptionFilter());
 
   const configService = app.get(ConfigService);
+  const nodeEnv = configService.get<string>('NODE_ENV', 'development');
+
+  if (nodeEnv === 'production') {
+    const required = ['JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET'];
+    const missing = required.filter((key) => !configService.get<string>(key));
+
+    if (missing.length > 0) {
+      throw new Error(`Missing required env: ${missing.join(', ')}`);
+    }
+  }
+
   const corsOrigins = configService
     .get<string>('CORS_ORIGINS', '')
     .split(',')
     .map((origin) => origin.trim())
     .filter((origin) => origin.length > 0);
+
+  if (nodeEnv === 'production' && corsOrigins.length === 0) {
+    throw new Error('CORS_ORIGINS is required in production');
+  }
 
   app.enableCors({
     origin: corsOrigins.length > 0 ? corsOrigins : true,

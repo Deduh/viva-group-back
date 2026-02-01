@@ -173,14 +173,23 @@ export class AuthService {
   }
 
   private getAccessSecret() {
-    return this.configService.get<string>('JWT_ACCESS_SECRET', 'access-secret');
+    const secret = this.configService.get<string>('JWT_ACCESS_SECRET');
+
+    if (!secret) {
+      throw new Error('JWT_ACCESS_SECRET is required');
+    }
+
+    return secret;
   }
 
   private getRefreshSecret() {
-    return this.configService.get<string>(
-      'JWT_REFRESH_SECRET',
-      'refresh-secret',
-    );
+    const secret = this.configService.get<string>('JWT_REFRESH_SECRET');
+
+    if (!secret) {
+      throw new Error('JWT_REFRESH_SECRET is required');
+    }
+
+    return secret;
   }
 
   private getAccessExpiresIn() {

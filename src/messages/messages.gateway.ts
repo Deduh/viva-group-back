@@ -246,11 +246,18 @@ export class MessagesGateway implements OnGatewayConnection {
   }
 
   private getAccessSecret() {
-    return this.configService.get<string>('JWT_ACCESS_SECRET', 'access-secret');
+    const secret = this.configService.get<string>('JWT_ACCESS_SECRET');
+
+    if (!secret) {
+      throw new Error('JWT_ACCESS_SECRET is required');
+    }
+
+    return secret;
   }
 
   private async canAccessBooking(bookingId: string, user: JwtPayload) {
     const isActive = await this.isUserActive(user.sub);
+
     if (!isActive) {
       return false;
     }
@@ -276,6 +283,7 @@ export class MessagesGateway implements OnGatewayConnection {
     user: JwtPayload,
   ) {
     const isActive = await this.isUserActive(user.sub);
+
     if (!isActive) {
       return false;
     }
