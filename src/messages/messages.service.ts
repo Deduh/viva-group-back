@@ -147,6 +147,69 @@ export class MessagesService {
     return { ...message, readByMe: true };
   }
 
+  async listCharter(bookingId: string, currentUser: RequestUser) {
+    await this.ensureCharterAccess(bookingId, currentUser);
+
+    const readState = await this.prisma.charterBookingReadState.findUnique({
+      where: {
+        charterBookingId_userId: {
+          charterBookingId: bookingId,
+          userId: currentUser.sub,
+        },
+      },
+      select: { lastReadAt: true },
+    });
+
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.message.findMany({
+        where: { charterBookingId: bookingId },
+        orderBy: { createdAt: 'asc' },
+        include: { author: { select: USER_SAFE_SELECT } },
+      }),
+      this.prisma.message.count({ where: { charterBookingId: bookingId } }),
+    ]);
+
+    const lastReadAt = readState?.lastReadAt ?? null;
+    const withRead = items.map((message) => ({
+      ...message,
+      readByMe: lastReadAt ? message.createdAt <= lastReadAt : false,
+    }));
+
+    return { items: withRead, total, lastReadAt };
+  }
+
+  async createCharter(
+    bookingId: string,
+    dto: CreateMessageDto,
+    currentUser: RequestUser,
+  ) {
+    await this.ensureCharterAccess(bookingId, currentUser);
+
+    const authorName = await this.getAuthorName(currentUser.sub);
+
+    const message = await this.prisma.message.create({
+      data: {
+        charterBookingId: bookingId,
+        authorId: currentUser.sub,
+        authorName,
+        text: sanitizePlainText(dto.text),
+        type: dto.type ?? undefined,
+        attachments: dto.attachments as Prisma.InputJsonValue | undefined,
+      },
+      include: { author: { select: USER_SAFE_SELECT } },
+    });
+
+    await this.updateCharterReadState(
+      bookingId,
+      currentUser.sub,
+      message.createdAt,
+    );
+
+    this.gateway.emitCharterMessage(bookingId, message);
+
+    return { ...message, readByMe: true };
+  }
+
   async markRead(
     bookingId: string,
     messageId: string,
@@ -229,6 +292,45 @@ export class MessagesService {
     return { success: true };
   }
 
+  async markReadCharter(
+    bookingId: string,
+    messageId: string,
+    currentUser: RequestUser,
+  ) {
+    await this.ensureCharterAccess(bookingId, currentUser);
+
+    const message = await this.prisma.message.findUnique({
+      where: { id: messageId },
+    });
+
+    if (!message || message.charterBookingId !== bookingId) {
+      throw new NotFoundException('Message not found');
+    }
+
+    await this.updateCharterReadState(
+      bookingId,
+      currentUser.sub,
+      message.createdAt,
+    );
+
+    return this.prisma.message.update({
+      where: { id: messageId },
+      data: { isRead: true },
+    });
+  }
+
+  async markReadAllCharter(bookingId: string, currentUser: RequestUser) {
+    await this.ensureCharterAccess(bookingId, currentUser);
+
+    await this.updateCharterReadState(bookingId, currentUser.sub, new Date());
+    await this.prisma.message.updateMany({
+      where: { charterBookingId: bookingId, isRead: false },
+      data: { isRead: true },
+    });
+
+    return { success: true };
+  }
+
   private async ensureBookingAccess(
     bookingId: string,
     currentUser: RequestUser,
@@ -261,6 +363,27 @@ export class MessagesService {
 
     if (!booking) {
       throw new NotFoundException('Group transport booking not found');
+    }
+
+    if (
+      currentUser.role === Role.CLIENT &&
+      booking.userId !== currentUser.sub
+    ) {
+      throw new ForbiddenException('Access denied');
+    }
+  }
+
+  private async ensureCharterAccess(
+    bookingId: string,
+    currentUser: RequestUser,
+  ) {
+    const booking = await this.prisma.charterBooking.findUnique({
+      where: { id: bookingId },
+      select: { id: true, userId: true },
+    });
+
+    if (!booking) {
+      throw new NotFoundException('Charter booking not found');
     }
 
     if (
@@ -344,6 +467,37 @@ export class MessagesService {
         userId,
         lastReadAt: readAt,
       },
+    });
+  }
+
+  private async updateCharterReadState(
+    bookingId: string,
+    userId: string,
+    readAt: Date,
+  ) {
+    const existing = await this.prisma.charterBookingReadState.findUnique({
+      where: {
+        charterBookingId_userId: {
+          charterBookingId: bookingId,
+          userId,
+        },
+      },
+      select: { lastReadAt: true },
+    });
+
+    if (existing && existing.lastReadAt >= readAt) {
+      return;
+    }
+
+    await this.prisma.charterBookingReadState.upsert({
+      where: {
+        charterBookingId_userId: {
+          charterBookingId: bookingId,
+          userId,
+        },
+      },
+      update: { lastReadAt: readAt },
+      create: { charterBookingId: bookingId, userId, lastReadAt: readAt },
     });
   }
 }

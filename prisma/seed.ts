@@ -159,9 +159,7 @@ function parseDateRange(program: CharterProgram): {
   if (matches.length >= 2) {
     const year = extractYear(program);
     const [startDay, startMonth] = matches[0].slice(1).map(Number);
-    const [endDay, endMonth] = matches[matches.length - 1]
-      .slice(1)
-      .map(Number);
+    const [endDay, endMonth] = matches[matches.length - 1].slice(1).map(Number);
 
     const startYear = year;
     const endYear = endMonth < startMonth ? year + 1 : year;
@@ -230,7 +228,6 @@ function extractSectionDates(program: CharterProgram): Date[] {
       if (explicitYear) {
         inferredYear = explicitYear;
       } else if (lastMonth !== undefined && month < lastMonth) {
-        // Handle year rollover for ranges like Dec -> Jan.
         inferredYear += 1;
       }
 

@@ -7,10 +7,13 @@ import { MailingController } from './mailing.controller';
 import { MailingService } from './mailing.service';
 import { MailingWorker } from './mailing.worker';
 
+const QUEUES_ENABLED =
+  process.env.NODE_ENV !== 'test' && process.env.DISABLE_QUEUES !== 'true';
+
 @Module({
   imports: [ConfigModule, MailModule, QueuesModule],
   controllers: [MailingController, MailingAdminController],
-  providers: [MailingService, MailingWorker],
+  providers: [MailingService, ...(QUEUES_ENABLED ? [MailingWorker] : [])],
   exports: [MailingService],
 })
 export class MailingModule {}

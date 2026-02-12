@@ -1,7 +1,10 @@
-import { BullModule } from '@nestjs/bullmq';
+import { BullModule, getQueueToken } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import type { RedisOptions } from 'ioredis';
+
+const QUEUES_ENABLED =
+  process.env.NODE_ENV !== 'test' && process.env.DISABLE_QUEUES !== 'true';
 
 function parseRedisUrl(url: string): RedisOptions {
   const parsed = new URL(url);
@@ -21,20 +24,38 @@ function parseRedisUrl(url: string): RedisOptions {
 @Module({
   imports: [
     ConfigModule,
-    BullModule.forRootAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) => {
-        const redisUrl = configService.get<string>('REDIS_URL');
-        const connection = redisUrl
-          ? parseRedisUrl(redisUrl)
-          : { host: '127.0.0.1', port: 6379 };
+    ...(QUEUES_ENABLED
+      ? [
+          BullModule.forRootAsync({
+            imports: [ConfigModule],
+            inject: [ConfigService],
+            useFactory: (configService: ConfigService) => {
+              const redisUrl = configService.get<string>('REDIS_URL');
+              const connection = redisUrl
+                ? parseRedisUrl(redisUrl)
+                : { host: '127.0.0.1', port: 6379 };
 
-        return { connection };
-      },
-    }),
-    BullModule.registerQueue({ name: 'telegram' }, { name: 'mailing' }),
+              return { connection };
+            },
+          }),
+          BullModule.registerQueue({ name: 'telegram' }, { name: 'mailing' }),
+        ]
+      : []),
   ],
-  exports: [BullModule],
+  providers: QUEUES_ENABLED
+    ? []
+    : [
+        {
+          provide: getQueueToken('telegram'),
+          useValue: { add: () => Promise.resolve(null) },
+        },
+        {
+          provide: getQueueToken('mailing'),
+          useValue: { add: () => Promise.resolve(null) },
+        },
+      ],
+  exports: QUEUES_ENABLED
+    ? [BullModule]
+    : [getQueueToken('telegram'), getQueueToken('mailing')],
 })
 export class QueuesModule {}

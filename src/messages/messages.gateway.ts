@@ -15,6 +15,7 @@ import { PrismaService } from '../prisma/prisma.service';
 
 const BOOKING_ROOM_PREFIX = 'booking:';
 const GROUP_TRANSPORT_ROOM_PREFIX = 'group-transport:';
+const CHARTER_ROOM_PREFIX = 'charter:';
 
 function getBookingRoom(bookingId: string) {
   return `${BOOKING_ROOM_PREFIX}${bookingId}`;
@@ -22,6 +23,10 @@ function getBookingRoom(bookingId: string) {
 
 function getGroupTransportRoom(bookingId: string) {
   return `${GROUP_TRANSPORT_ROOM_PREFIX}${bookingId}`;
+}
+
+function getCharterRoom(bookingId: string) {
+  return `${CHARTER_ROOM_PREFIX}${bookingId}`;
 }
 
 function extractBookingId(payload: unknown): string | null {
@@ -206,6 +211,56 @@ export class MessagesGateway implements OnGatewayConnection {
     return { ok: true, room };
   }
 
+  @SubscribeMessage('charter:join')
+  async handleCharterJoin(
+    @ConnectedSocket() client: AuthSocket,
+    @MessageBody() payload: unknown,
+  ) {
+    const user = client.data.user;
+
+    if (!user) {
+      return { ok: false, error: 'Unauthorized' };
+    }
+
+    const bookingId = extractBookingId(payload);
+
+    if (!bookingId) {
+      return { ok: false, error: 'bookingId is required' };
+    }
+
+    const hasAccess = await this.canAccessCharterBooking(bookingId, user);
+
+    if (!hasAccess) {
+      return { ok: false, error: 'Access denied' };
+    }
+
+    const room = getCharterRoom(bookingId);
+    await client.join(room);
+
+    return { ok: true, room };
+  }
+
+  @SubscribeMessage('charter:leave')
+  async handleCharterLeave(
+    @ConnectedSocket() client: AuthSocket,
+    @MessageBody() payload: unknown,
+  ) {
+    if (!client.data.user) {
+      return { ok: false, error: 'Unauthorized' };
+    }
+
+    const bookingId = extractBookingId(payload);
+
+    if (!bookingId) {
+      return { ok: false, error: 'bookingId is required' };
+    }
+
+    const room = getCharterRoom(bookingId);
+    await client.leave(room);
+
+    return { ok: true, room };
+  }
+
   emitMessage(bookingId: string, message: unknown) {
     const room = getBookingRoom(bookingId);
     this.server.to(room).emit('booking:message', message);
@@ -224,6 +279,16 @@ export class MessagesGateway implements OnGatewayConnection {
   emitGroupTransportStatus(bookingId: string, status: BookingStatus) {
     const room = getGroupTransportRoom(bookingId);
     this.server.to(room).emit('group-transport:status', { bookingId, status });
+  }
+
+  emitCharterMessage(bookingId: string, message: unknown) {
+    const room = getCharterRoom(bookingId);
+    this.server.to(room).emit('charter:message', message);
+  }
+
+  emitCharterStatus(bookingId: string, status: BookingStatus) {
+    const room = getCharterRoom(bookingId);
+    this.server.to(room).emit('charter:status', { bookingId, status });
   }
 
   private extractToken(client: AuthSocket) {
@@ -289,6 +354,29 @@ export class MessagesGateway implements OnGatewayConnection {
     }
 
     const booking = await this.prisma.groupTransportBooking.findUnique({
+      where: { id: bookingId },
+      select: { userId: true },
+    });
+
+    if (!booking) {
+      return false;
+    }
+
+    if (user.role === Role.CLIENT) {
+      return booking.userId === user.sub;
+    }
+
+    return true;
+  }
+
+  private async canAccessCharterBooking(bookingId: string, user: JwtPayload) {
+    const isActive = await this.isUserActive(user.sub);
+
+    if (!isActive) {
+      return false;
+    }
+
+    const booking = await this.prisma.charterBooking.findUnique({
       where: { id: bookingId },
       select: { userId: true },
     });

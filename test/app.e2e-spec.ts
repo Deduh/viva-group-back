@@ -25,6 +25,7 @@ describe('API (e2e)', () => {
   let clientToken: string;
   let tourId: string;
   let bookingId: string;
+  let charterBookingId: string;
 
   const adminEmail = `admin-${randomUUID()}@example.com`;
   const clientEmail = `client-${randomUUID()}@example.com`;
@@ -92,6 +93,13 @@ describe('API (e2e)', () => {
       await prisma.booking.deleteMany({ where: { id: bookingId } });
     }
 
+    if (charterBookingId) {
+      await prisma.message.deleteMany({ where: { charterBookingId } });
+      await prisma.charterBooking.deleteMany({
+        where: { id: charterBookingId },
+      });
+    }
+
     if (tourId) {
       await prisma.tour.deleteMany({ where: { id: tourId } });
     }
@@ -157,6 +165,31 @@ describe('API (e2e)', () => {
 
     await request(server)
       .patch(`/api/bookings/${bookingId}/status`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ status: 'CONFIRMED' })
+      .expect(200);
+  });
+
+  it('creates a charter booking as client and updates status', async () => {
+    const bookingResponse = await request(server)
+      .post('/api/charter/bookings')
+      .set('Authorization', `Bearer ${clientToken}`)
+      .send({
+        from: 'Moscow',
+        to: 'Antalya',
+        dateFrom: '2026-02-01',
+        dateTo: '2026-02-10',
+        adults: 2,
+        children: 1,
+        categories: ['4*', 'семейный'],
+      })
+      .expect(201);
+
+    const bookingBody = bookingResponse.body as { id: string };
+    charterBookingId = bookingBody.id;
+
+    await request(server)
+      .patch(`/api/charter/bookings/${charterBookingId}/status`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ status: 'CONFIRMED' })
       .expect(200);

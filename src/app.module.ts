@@ -8,6 +8,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 import { BookingsModule } from './bookings/bookings.module';
+import { CharterModule } from './charter/charter.module';
 import { CommonModule } from './common/common.module';
 import { ContactsModule } from './contacts/contacts.module';
 import { GroupTransportModule } from './group-transport/group-transport.module';
@@ -43,6 +44,7 @@ import { UsersModule } from './users/users.module';
     AuthModule,
     ToursModule,
     BookingsModule,
+    CharterModule,
     GroupTransportModule,
     MessagesModule,
     AdminModule,

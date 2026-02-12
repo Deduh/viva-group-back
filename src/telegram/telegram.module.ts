@@ -8,10 +8,17 @@ import { TelegramController } from './telegram.controller';
 import { TelegramService } from './telegram.service';
 import { TelegramWorker } from './telegram.worker';
 
+const QUEUES_ENABLED =
+  process.env.NODE_ENV !== 'test' && process.env.DISABLE_QUEUES !== 'true';
+
 @Module({
   imports: [ConfigModule, QueuesModule, ContactsModule, MailingModule],
   controllers: [TelegramController],
-  providers: [TelegramService, TelegramSessionService, TelegramWorker],
+  providers: [
+    TelegramService,
+    TelegramSessionService,
+    ...(QUEUES_ENABLED ? [TelegramWorker] : []),
+  ],
   exports: [TelegramService],
 })
 export class TelegramModule {}

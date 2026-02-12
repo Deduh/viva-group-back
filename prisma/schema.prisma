@@ -86,9 +86,12 @@ model User {
   updatedAt                DateTime                         @updatedAt
   bookings                 Booking[]
   groupBookings            GroupTransportBooking[]
+  charterBookings          CharterBooking[]
+  charterFlights           CharterFlight[]
   messages                 Message[]                        @relation("MessageAuthor")
   bookingReadStates        BookingReadState[]
   groupTransportReadStates GroupTransportBookingReadState[]
+  charterReadStates        CharterBookingReadState[]
   mailingCampaigns         MailingCampaign[]                @relation("MailingCampaignCreator")
   invitedBy                User?                            @relation("UserInvites", fields: [invitedById], references: [id])
   invitedUsers             User[]                           @relation("UserInvites")
@@ -145,6 +148,76 @@ model BookingIdCounter {
   current Int
 }
 
+model CharterBooking {
+  id         String                    @id @default(uuid())
+  publicId   String                    @unique
+  userId     String
+  flightId   String
+  dateFrom   DateTime
+  dateTo     DateTime
+  adults     Int
+  children   Int
+  status     BookingStatus             @default(PENDING)
+  createdAt  DateTime                  @default(now())
+  updatedAt  DateTime                  @updatedAt
+  user       User                      @relation(fields: [userId], references: [id])
+  flight     CharterFlight             @relation(fields: [flightId], references: [id], onDelete: Restrict)
+  messages   Message[]                 @relation("CharterBookingMessages")
+  readStates CharterBookingReadState[]
+
+  @@index([userId])
+  @@index([flightId])
+}
+
+model CharterBookingIdCounter {
+  year    Int @id
+  current Int
+}
+
+model CharterFlight {
+  id               String              @id @default(uuid())
+  publicId         String              @unique
+  createdById      String
+  from             String
+  to               String
+  dateFrom         DateTime
+  dateTo           DateTime
+  weekDays         Int[]
+  categories       String[]
+  seatsTotal       Int
+  isActive         Boolean             @default(true)
+  hasBusinessClass Boolean             @default(false)
+  hasComfortClass  Boolean             @default(false)
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  createdBy        User                @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  dates            CharterFlightDate[]
+  bookings         CharterBooking[]
+
+  @@index([createdById])
+  @@index([from])
+  @@index([to])
+}
+
+model CharterFlightDate {
+  id         String        @id @default(uuid())
+  flightId   String
+  date       DateTime
+  seatsTotal Int
+  seatsLeft  Int
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  flight     CharterFlight @relation(fields: [flightId], references: [id], onDelete: Cascade)
+
+  @@unique([flightId, date])
+  @@index([date])
+}
+
+model CharterFlightIdCounter {
+  year    Int @id
+  current Int
+}
+
 model GroupTransportBooking {
   id         String                           @id @default(uuid())
   userId     String
@@ -189,6 +262,7 @@ model Message {
   id                      String                 @id @default(uuid())
   bookingId               String?
   groupTransportBookingId String?
+  charterBookingId        String?
   authorId                String
   authorName              String?
   text                    String
@@ -198,10 +272,12 @@ model Message {
   createdAt               DateTime               @default(now())
   booking                 Booking?               @relation(fields: [bookingId], references: [id])
   groupTransportBooking   GroupTransportBooking? @relation("GroupTransportBookingMessages", fields: [groupTransportBookingId], references: [id])
+  charterBooking          CharterBooking?        @relation("CharterBookingMessages", fields: [charterBookingId], references: [id])
   author                  User                   @relation("MessageAuthor", fields: [authorId], references: [id])
 
   @@index([bookingId])
   @@index([groupTransportBookingId])
+  @@index([charterBookingId])
   @@index([authorId])
 }
 
@@ -290,5 +366,19 @@ model GroupTransportBookingReadState {
   user                    User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([groupTransportBookingId, userId])
+  @@index([userId])
+}
+
+model CharterBookingReadState {
+  id               String         @id @default(uuid())
+  charterBookingId String
+  userId           String
+  lastReadAt       DateTime
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  booking          CharterBooking @relation(fields: [charterBookingId], references: [id], onDelete: Cascade)
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([charterBookingId, userId])
   @@index([userId])
 }
