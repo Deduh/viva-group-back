@@ -1,6 +1,8 @@
+import { CharterTripType } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import {
   IsDateString,
+  IsEnum,
   IsInt,
   IsOptional,
   IsString,
@@ -32,8 +34,13 @@ export class CreateCharterBookingDto {
   @IsDateString()
   dateFrom!: string;
 
+  @IsOptional()
   @IsDateString()
-  dateTo!: string;
+  dateTo?: string;
+
+  @IsOptional()
+  @IsEnum(CharterTripType)
+  tripType?: CharterTripType;
 
   @IsInt()
   @Min(1)

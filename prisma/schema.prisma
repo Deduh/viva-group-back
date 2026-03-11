@@ -69,6 +69,11 @@ enum MailingLogStatus {
   failed
 }
 
+enum CharterTripType {
+  ONE_WAY
+  ROUND_TRIP
+}
+
 model User {
   id                       String                           @id @default(uuid())
   email                    String                           @unique
@@ -153,8 +158,9 @@ model CharterBooking {
   publicId   String                    @unique
   userId     String
   flightId   String
+  tripType   CharterTripType           @default(ROUND_TRIP)
   dateFrom   DateTime
-  dateTo     DateTime
+  dateTo     DateTime?
   adults     Int
   children   Int
   status     BookingStatus             @default(PENDING)

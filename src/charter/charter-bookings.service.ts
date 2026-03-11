@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { BookingStatus, Prisma, Role } from '@prisma/client';
+import { BookingStatus, CharterTripType, Prisma, Role } from '@prisma/client';
 import { RequestUser } from '../common/decorators/current-user.decorator';
 import { resolvePagination } from '../common/utils/pagination';
 import { MessagesGateway } from '../messages/messages.gateway';
@@ -103,6 +103,7 @@ export class CharterBookingsService {
 
   async create(dto: CreateCharterBookingDto, currentUser: RequestUser) {
     const userId = this.resolveUserId(dto.userId, currentUser);
+    const tripType = dto.tripType ?? CharterTripType.ROUND_TRIP;
 
     if (dto.userId && currentUser.role !== Role.CLIENT) {
       const userExists = await this.prisma.user.findUnique({
@@ -116,13 +117,31 @@ export class CharterBookingsService {
     }
 
     const dateFrom = this.toUtcMidnight(dto.dateFrom);
-    const dateTo = this.toUtcMidnight(dto.dateTo);
 
-    if (Number.isNaN(dateFrom.getTime()) || Number.isNaN(dateTo.getTime())) {
+    if (Number.isNaN(dateFrom.getTime())) {
       throw new BadRequestException('Invalid date range');
     }
 
-    if (dateFrom.getTime() > dateTo.getTime()) {
+    const parsedDateTo =
+      typeof dto.dateTo === 'string' ? this.toUtcMidnight(dto.dateTo) : null;
+
+    if (parsedDateTo && Number.isNaN(parsedDateTo.getTime())) {
+      throw new BadRequestException('Invalid date range');
+    }
+
+    if (tripType === CharterTripType.ONE_WAY && parsedDateTo) {
+      throw new BadRequestException('dateTo must be empty for ONE_WAY');
+    }
+
+    if (tripType === CharterTripType.ROUND_TRIP && !parsedDateTo) {
+      throw new BadRequestException('dateTo is required for ROUND_TRIP');
+    }
+
+    if (
+      tripType === CharterTripType.ROUND_TRIP &&
+      parsedDateTo &&
+      dateFrom.getTime() > parsedDateTo.getTime()
+    ) {
       throw new BadRequestException('dateFrom must be <= dateTo');
     }
 
@@ -154,13 +173,20 @@ export class CharterBookingsService {
           );
         }
 
-        if (dateTo.getTime() > flight.dateTo.getTime()) {
+        if (parsedDateTo && parsedDateTo.getTime() > flight.dateTo.getTime()) {
           throw new BadRequestException('dateTo is after flight availability');
         }
 
         const pax = dto.adults + (dto.children ?? 0);
 
-        await this.reserveSeatsOrFail(tx, flight.id, dateFrom, dateTo, pax);
+        await this.reserveSeatsOrFail(
+          tx,
+          flight.id,
+          dateFrom,
+          parsedDateTo,
+          pax,
+          tripType,
+        );
 
         const publicId = await this.allocatePublicId(tx, year);
 
@@ -169,8 +195,9 @@ export class CharterBookingsService {
             publicId,
             userId,
             flightId: flight.id,
+            tripType,
             dateFrom,
-            dateTo,
+            dateTo: parsedDateTo,
             adults: dto.adults,
             children: dto.children ?? 0,
             status: BookingStatus.PENDING,
@@ -193,6 +220,7 @@ export class CharterBookingsService {
             id: true,
             status: true,
             flightId: true,
+            tripType: true,
             dateFrom: true,
             dateTo: true,
             adults: true,
@@ -216,6 +244,7 @@ export class CharterBookingsService {
             existing.dateFrom,
             existing.dateTo,
             pax,
+            existing.tripType,
           );
         } else if (wasCancelled && !willBeCancelled) {
           await this.reserveSeatsOrFail(
@@ -224,6 +253,7 @@ export class CharterBookingsService {
             existing.dateFrom,
             existing.dateTo,
             pax,
+            existing.tripType,
           );
         }
 
@@ -309,11 +339,33 @@ export class CharterBookingsService {
     tx: Prisma.TransactionClient,
     flightId: string,
     dateFrom: Date,
-    dateTo: Date,
+    dateTo: Date | null,
     pax: number,
+    tripType: CharterTripType,
   ) {
     if (pax <= 0) {
       throw new BadRequestException('pax must be > 0');
+    }
+
+    if (tripType === CharterTripType.ONE_WAY) {
+      const rows = await tx.$queryRaw<{ id: string }[]>`
+        UPDATE "CharterFlightDate"
+        SET "seatsLeft" = "seatsLeft" - ${pax}
+        WHERE "flightId" = ${flightId}
+          AND "date" = ${dateFrom}
+          AND "seatsLeft" >= ${pax}
+        RETURNING "id";
+      `;
+
+      if (rows.length === 0) {
+        throw new BadRequestException('No seats available for selected dates');
+      }
+
+      return;
+    }
+
+    if (!dateTo) {
+      throw new BadRequestException('dateTo is required for ROUND_TRIP');
     }
 
     if (dateFrom.getTime() === dateTo.getTime()) {
@@ -364,10 +416,26 @@ export class CharterBookingsService {
     tx: Prisma.TransactionClient,
     flightId: string,
     dateFrom: Date,
-    dateTo: Date,
+    dateTo: Date | null,
     pax: number,
+    tripType: CharterTripType,
   ) {
     if (pax <= 0) {
+      return;
+    }
+
+    if (tripType === CharterTripType.ONE_WAY) {
+      await tx.$executeRaw`
+        UPDATE "CharterFlightDate"
+        SET "seatsLeft" = LEAST("seatsTotal", "seatsLeft" + ${pax})
+        WHERE "flightId" = ${flightId}
+          AND "date" = ${dateFrom};
+      `;
+
+      return;
+    }
+
+    if (!dateTo) {
       return;
     }
 
